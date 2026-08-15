@@ -1,0 +1,9 @@
+.DS_Store
+.env
+.gltest_cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+artifacts/
+frontend/dist/
+frontend/node_modules/

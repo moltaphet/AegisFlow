@@ -1,0 +1,27 @@
+{
+  "network": "studionet",
+  "chain_id": 61999,
+  "rpc_url": "https://studio.genlayer.com/api",
+  "contract_name": "AegisFlow",
+  "deployment_status": "verified",
+  "contract_address": "0x9De75d5487114b5523576f9a0671Fe78AD71d59d",
+  "deployer": null,
+  "owner": "0x1f9813eeB2de53134af5C824cA156CE82C4EB0fa",
+  "deployment_tx": null,
+  "deployed_at": null,
+  "verified_at": "2026-08-15T17:31:52Z",
+  "verification_method": "StudioNet read-only RPC: trust model, vault invariants, schema equality, and decoded code-byte equality",
+  "code_sha256": "3d3ab2d3bf0c3d54cabe1fbad25a341146ff1775d28de5a0b8c7afd91d971aee",
+  "schema_canonical_sha256": "8c31a9403d61ff6a4510c73298de8418338b4c20b8c00440cb7684501f8d25c8",
+  "runner": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6",
+  "payout_statuses": [
+    "NO_TRIGGER",
+    "WEATHER_DEFICIT",
+    "GRID_OUTAGE"
+  ],
+  "payout_bps": [
+    0,
+    5000,
+    10000
+  ]
+}

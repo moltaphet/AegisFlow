@@ -5,9 +5,12 @@ parametric insurance of renewable microgrids. A policy escrows its maximum
 payout from a native GEN reserve, then settles from independently fetched
 weather and infrastructure evidence under validator consensus.
 
-The repository is deployment-ready but intentionally records no live contract
-address. `deployments/studionet.json` remains `not_deployed` until the deployment
-script finalizes a transaction and verifies the new contract on-chain.
+The repository includes a read-only verified StudioNet deployment record for
+`0x9De75d5487114b5523576f9a0671Fe78AD71d59d`. The address, trust model, vault
+invariants, generated schema, and decoded on-chain contract bytes were verified
+against the local artifacts on 2026-08-15. The original deployment transaction
+and deployer account are not available in this workspace and remain `null` in
+the metadata rather than being inferred.
 
 ## Components
 
@@ -278,18 +281,27 @@ The script funds the deployer through StudioNet simulation only when needed,
 waits for finalization, rejects failed contract execution, obtains the deployed
 address from the decoded receipt, then reads `get_trust_model()` and
 `get_vault_state()`. It writes verified metadata only after the contract
-identifies itself as AegisFlow and both vault invariants are true. The private
-key is never written to disk.
+identifies itself as AegisFlow, both vault invariants are true, and the decoded
+contract bytes and generated schema match the local artifacts. The private key
+is never written to disk.
+
+The checked-in record was verified independently through read-only StudioNet
+RPC. It reports the expected AegisFlow identity, owner
+`0x1f9813eeB2de53134af5C824cA156CE82C4EB0fa`, payout statuses, weather and
+infrastructure source model, and true accounting and reserve invariants. The
+decoded `gen_getContractCode` payload matches `contracts/aegis_flow.py` byte for
+byte, and `gen_getContractSchema` matches `contracts/aegis_flow.schema.json`.
 
 ## Operator Console
 
-Copy the frontend environment shape into a local `.env` and set a deployed
-address when no verified record has been checked in:
+The console uses the address in the checked-in verified deployment record by
+default. A local `.env` can select another supported network or override the
+address:
 
 ```text
 VITE_GENLAYER_NETWORK=studionet
 VITE_GENLAYER_RPC_URL=https://studio.genlayer.com/api
-VITE_CONTRACT_ADDRESS=0x...
+# VITE_CONTRACT_ADDRESS=0x...
 ```
 
 Start the console:
@@ -306,4 +318,3 @@ the owner returned by `get_vault_state()`.
 
 When no deployment is configured, the console renders an explicit undeployed
 state and no fabricated policy or vault values.
-# AegisFlow

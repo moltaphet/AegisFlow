@@ -1,0 +1,183 @@
+{
+  "ctor": {
+    "params": [],
+    "kwparams": {}
+  },
+  "methods": {
+    "allocate_premiums_to_reserve": {
+      "params": [
+        [
+          "amount_atto",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "create_policy": {
+      "params": [
+        [
+          "site_name",
+          "string"
+        ],
+        [
+          "region",
+          "string"
+        ],
+        [
+          "latitude_e6",
+          "int"
+        ],
+        [
+          "longitude_e6",
+          "int"
+        ],
+        [
+          "coverage_start",
+          "string"
+        ],
+        [
+          "coverage_end",
+          "string"
+        ],
+        [
+          "weather_metric",
+          "string"
+        ],
+        [
+          "trigger_direction",
+          "string"
+        ],
+        [
+          "threshold_milli",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "int",
+      "payable": true
+    },
+    "evaluate_claim": {
+      "params": [
+        [
+          "policy_id",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "string",
+      "payable": false
+    },
+    "expire_policy": {
+      "params": [
+        [
+          "policy_id",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "fund_payout_reserve": {
+      "params": [],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": true
+    },
+    "get_policy": {
+      "params": [
+        [
+          "policy_id",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "dict"
+    },
+    "get_policy_count": {
+      "params": [],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "int"
+    },
+    "get_source_urls": {
+      "params": [
+        [
+          "policy_id",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "dict"
+    },
+    "get_trust_model": {
+      "params": [],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "dict"
+    },
+    "get_vault_state": {
+      "params": [],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "dict"
+    },
+    "remove_liquidity": {
+      "params": [
+        [
+          "amount_atto",
+          "int"
+        ],
+        [
+          "pool",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "set_paused": {
+      "params": [
+        [
+          "paused",
+          "bool"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "submit_claim": {
+      "params": [
+        [
+          "policy_id",
+          "int"
+        ],
+        [
+          "report_source",
+          "string"
+        ],
+        [
+          "report_reference",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    }
+  }
+}
