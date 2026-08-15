@@ -78,7 +78,7 @@ const NAV_ITEMS: Array<{
   { key: "vault", label: "Vault", icon: Landmark },
 ];
 
-type StageListener = (stage: TxStage, hash?: string) => void;
+type StageListener = (stage: TxStage, hash?: string, error?: string) => void;
 type RunAction = (
   label: string,
   nondeterministic: boolean,
@@ -843,14 +843,15 @@ function Vault({
 
 function TransactionMonitor({ tx, onClose }: { tx: TransactionState; onClose: () => void }) {
   if (tx.stage === "idle") return null;
-  const stages: Array<{ key: Exclude<TxStage, "idle" | "failed">; label: string; detail: string }> = [
+  const stages: Array<{ key: Exclude<TxStage, "idle" | "failed" | "finalizing">; label: string; detail: string }> = [
     { key: "signing", label: "Wallet signature", detail: "Authorize transaction" },
-    { key: "executing", label: "Pending execution", detail: tx.nondeterministic ? "Validators fetch and classify evidence" : "GenVM applies the state transition" },
+    { key: "executing", label: tx.stage === "finalizing" ? "Consensus finalizing" : "Pending execution", detail: tx.stage === "finalizing" ? "StudioNet is still confirming the submitted transaction" : tx.nondeterministic ? "Validators fetch and classify evidence" : "GenVM applies the state transition" },
     { key: "accepted", label: "Consensus reached", detail: "Validator outcome accepted" },
     { key: "finalized", label: "Finalized", detail: "State is settled on-chain" },
   ];
   const order = ["signing", "executing", "accepted", "finalized"];
-  const activeIndex = tx.stage === "failed" ? -1 : order.indexOf(tx.stage);
+  const visualStage = tx.stage === "finalizing" ? "executing" : tx.stage;
+  const activeIndex = tx.stage === "failed" ? -1 : order.indexOf(visualStage);
 
   return (
     <aside className={`tx-monitor ${tx.stage === "failed" ? "failed" : ""}`} aria-live="polite">
@@ -891,7 +892,6 @@ export default function App() {
     }
     let active = true;
     setLoading(true);
-    setDataReady(false);
     setReadError("");
     contract
       .getVaultState()
@@ -912,6 +912,45 @@ export default function App() {
       active = false;
     };
   }, [refreshKey]);
+
+  const consensusPending =
+    tx.stage === "executing" ||
+    tx.stage === "accepted" ||
+    tx.stage === "finalizing";
+
+  useEffect(() => {
+    if (!contract.isConfigured()) return;
+    let active = true;
+    const interval = window.setInterval(
+      () => {
+        void contract
+          .getVaultState()
+          .then(async (state) => ({
+            state,
+            records:
+              state.policyCount !== vault.policyCount
+                ? await contract.getRecentPolicies(state.policyCount)
+                : null,
+          }))
+          .then(({ state, records }) => {
+            if (!active) return;
+            setVault(state);
+            if (records) setPolicies(records);
+            setDataReady(true);
+            setReadError("");
+          })
+          .catch(() => {
+            // Background reads retry on the next interval without replacing
+            // the last confirmed vault state with a transient RPC error.
+          });
+      },
+      consensusPending ? 10_000 : 30_000,
+    );
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [consensusPending, vault.policyCount]);
 
   async function connect() {
     try {
@@ -934,10 +973,17 @@ export default function App() {
   ): Promise<boolean> {
     setTx({ ...EMPTY_TX, stage: "signing", action: label, nondeterministic });
     try {
-      await operation((stage, hash) => {
-        setTx((current) => ({ ...current, stage, hash: hash || current.hash }));
+      await operation((stage, hash, stageError) => {
+        setTx((current) => ({
+          ...current,
+          stage,
+          hash: hash || current.hash,
+          error: stageError ? errorMessage(stageError) : "",
+        }));
+        if (stage === "finalized") {
+          setRefreshKey((value) => value + 1);
+        }
       });
-      setRefreshKey((value) => value + 1);
       return true;
     } catch (error) {
       setTx((current) => ({ ...current, stage: "failed", error: errorMessage(error) }));
@@ -945,7 +991,11 @@ export default function App() {
     }
   }
 
-  const busy = tx.stage === "signing" || tx.stage === "executing" || tx.stage === "accepted";
+  const busy =
+    tx.stage === "signing" ||
+    tx.stage === "executing" ||
+    tx.stage === "accepted" ||
+    tx.stage === "finalizing";
   const title = NAV_ITEMS.find((item) => item.key === view)?.label ?? "Exposure";
 
   return (
@@ -978,6 +1028,7 @@ export default function App() {
         </header>
 
         {readError && <div className="read-error"><AlertTriangle size={16} /><span>{readError}</span><button className="icon-button" onClick={() => setReadError("")} aria-label="Dismiss read error"><X size={15} /></button></div>}
+        {tx.stage === "finalizing" && <div className="consensus-strip"><LoaderCircle size={16} className="spin" /><span>Consensus finalizing on StudioNet...</span><small>The transaction is submitted. Vault balances will refresh automatically once confirmed.</small></div>}
         {!contract.isConfigured() && <div className="configuration-strip"><AlertTriangle size={15} /><span>Deployment status: not deployed. No sample or fabricated contract data is shown.</span><code>{CONTRACT_ADDRESS || "VITE_CONTRACT_ADDRESS unset"}</code></div>}
 
         <div className="workspace">

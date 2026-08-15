@@ -8,9 +8,11 @@ import {
 import {
   ExecutionResult,
   TransactionStatus,
+  transactionsStatusNumberToName,
   type CalldataEncodable,
   type GenLayerTransaction,
   type Network,
+  type TransactionHash,
 } from "genlayer-js/types";
 import schema from "../../contracts/aegis_flow.schema.json";
 import {
@@ -26,7 +28,16 @@ const CHAIN = CHAINS[NETWORK_NAME];
 type Client = ReturnType<typeof createClient>;
 type ClientConfig = NonNullable<Parameters<typeof createClient>[0]>;
 type EthereumProvider = NonNullable<ClientConfig["provider"]>;
-type StageListener = (stage: TxStage, hash?: string) => void;
+type StageListener = (stage: TxStage, hash?: string, error?: string) => void;
+
+const TRANSACTION_POLL_INTERVAL_MS = 10_000;
+const TRANSACTION_CONFIRMATION_TIMEOUT_MS = 120_000;
+const FAILED_CONSENSUS_STATUSES = new Set<TransactionStatus>([
+  TransactionStatus.CANCELED,
+  TransactionStatus.LEADER_TIMEOUT,
+  TransactionStatus.UNDETERMINED,
+  TransactionStatus.VALIDATORS_TIMEOUT,
+]);
 
 function clientConfig(extra: Partial<ClientConfig> = {}): ClientConfig {
   return {
@@ -51,6 +62,59 @@ export function connectedAddress(): string | null {
   return walletAddress;
 }
 
+function chainHexId(): `0x${string}` {
+  return `0x${CHAIN.id.toString(16)}`;
+}
+
+function walletErrorCode(error: unknown): number | null {
+  if (!error || typeof error !== "object" || !("code" in error)) return null;
+  const code = Number((error as { code: unknown }).code);
+  return Number.isFinite(code) ? code : null;
+}
+
+async function ensureWalletChain(injected: EthereumProvider): Promise<void> {
+  const chainId = chainHexId();
+  const currentChainId = String(
+    await injected.request({ method: "eth_chainId" }),
+  ).toLowerCase();
+  if (currentChainId === chainId.toLowerCase()) return;
+
+  try {
+    await injected.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId }],
+    });
+    return;
+  } catch (error) {
+    if (walletErrorCode(error) !== 4902) throw error;
+  }
+
+  const rpcUrl = RPC_OVERRIDE || CHAIN.rpcUrls.default.http[0];
+  const explorerUrl = CHAIN.blockExplorers?.default.url;
+  await injected.request({
+    method: "wallet_addEthereumChain",
+    params: [
+      {
+        chainId,
+        chainName:
+          NETWORK_NAME === "studionet"
+            ? "GenLayer Studio Network"
+            : CHAIN.name,
+        nativeCurrency:
+          NETWORK_NAME === "studionet"
+            ? { name: "GEN", symbol: "GEN", decimals: 18 }
+            : CHAIN.nativeCurrency,
+        rpcUrls: [rpcUrl],
+        ...(explorerUrl ? { blockExplorerUrls: [explorerUrl] } : {}),
+      },
+    ],
+  });
+  await injected.request({
+    method: "wallet_switchEthereumChain",
+    params: [{ chainId }],
+  });
+}
+
 export async function connectWallet(): Promise<string> {
   const injected = (window as unknown as { ethereum?: EthereumProvider }).ethereum;
   if (!injected) {
@@ -62,6 +126,8 @@ export async function connectWallet(): Promise<string> {
   })) as string[];
   const address = accounts[0];
   if (!address) throw new Error("The wallet did not return an account.");
+
+  await ensureWalletChain(injected);
 
   writeClient = createClient(
     clientConfig({
@@ -115,19 +181,121 @@ function readBool(value: CalldataEncodable | undefined): boolean {
   return value === true || value === 1 || value === "true";
 }
 
-function requireSuccessfulExecution(
+class ConfirmedTransactionError extends Error {}
+
+function transactionStatus(receipt: GenLayerTransaction): TransactionStatus | null {
+  if (receipt.statusName) return receipt.statusName;
+  if (typeof receipt.status === "string") {
+    return (
+      (transactionsStatusNumberToName as Record<string, TransactionStatus>)[
+        receipt.status
+      ] ?? receipt.status
+    );
+  }
+  if (typeof receipt.status === "number") {
+    return (
+      (transactionsStatusNumberToName as Record<string, TransactionStatus>)[
+        String(receipt.status)
+      ] ?? null
+    );
+  }
+  return null;
+}
+
+function executionState(
   receipt: GenLayerTransaction,
-  status: "accepted" | "finalized",
-): void {
+): "success" | "failure" | "pending" {
   if (
     receipt.txExecutionResultName === ExecutionResult.FINISHED_WITH_RETURN ||
     receipt.txExecutionResult === 1
   ) {
-    return;
+    return "success";
   }
-  const result =
-    receipt.txExecutionResultName ?? receipt.txExecutionResult ?? "UNKNOWN";
-  throw new Error(`Contract execution failed at ${status} status (${result}).`);
+  if (
+    receipt.txExecutionResultName === ExecutionResult.FINISHED_WITH_ERROR ||
+    receipt.txExecutionResult === 2
+  ) {
+    return "failure";
+  }
+  return "pending";
+}
+
+function receiptReachedStatus(
+  receipt: GenLayerTransaction,
+  requestedStatus: TransactionStatus,
+): boolean {
+  const status = transactionStatus(receipt);
+  if (status && FAILED_CONSENSUS_STATUSES.has(status)) {
+    throw new ConfirmedTransactionError(
+      `StudioNet consensus ended with status ${status}.`,
+    );
+  }
+
+  const execution = executionState(receipt);
+  if (execution === "failure") {
+    throw new ConfirmedTransactionError(
+      `Contract execution failed at ${status ?? "UNKNOWN"} status.`,
+    );
+  }
+
+  if (requestedStatus === TransactionStatus.FINALIZED) {
+    return status === TransactionStatus.FINALIZED && execution === "success";
+  }
+  return (
+    (status === TransactionStatus.ACCEPTED ||
+      status === TransactionStatus.FINALIZED) &&
+    execution === "success"
+  );
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function pollForReceipt(
+  hash: TransactionHash,
+  status: TransactionStatus,
+  deadline: number,
+): Promise<GenLayerTransaction | null> {
+  while (Date.now() < deadline) {
+    try {
+      const receipt = await readClient.getTransaction({ hash });
+      if (receiptReachedStatus(receipt, status)) return receipt;
+    } catch (error) {
+      if (error instanceof ConfirmedTransactionError) throw error;
+      // A submitted StudioNet transaction can be temporarily absent from the
+      // read RPC while it propagates. Keep polling until the deadline.
+    }
+
+    await sleep(
+      Math.min(TRANSACTION_POLL_INTERVAL_MS, deadline - Date.now()),
+    );
+  }
+  return null;
+}
+
+async function confirmTransaction(
+  hash: TransactionHash,
+  textHash: string,
+  onStage: StageListener,
+  deadline: number,
+): Promise<boolean> {
+  const acceptedReceipt = await pollForReceipt(
+    hash,
+    TransactionStatus.ACCEPTED,
+    deadline,
+  );
+  if (!acceptedReceipt) return false;
+  onStage("accepted", textHash);
+
+  const finalizedReceipt = await pollForReceipt(
+    hash,
+    TransactionStatus.FINALIZED,
+    deadline,
+  );
+  if (!finalizedReceipt) return false;
+  onStage("finalized", textHash);
+  return true;
 }
 
 async function read(
@@ -237,23 +405,27 @@ async function write(
   const textHash = String(hash);
   onStage("executing", textHash);
 
-  const acceptedReceipt = await readClient.waitForTransactionReceipt({
+  const finalized = await confirmTransaction(
     hash,
-    status: TransactionStatus.ACCEPTED,
-    interval: 10_000,
-    retries: 120,
-  });
-  requireSuccessfulExecution(acceptedReceipt, "accepted");
-  onStage("accepted", textHash);
-
-  const finalizedReceipt = await readClient.waitForTransactionReceipt({
-    hash,
-    status: TransactionStatus.FINALIZED,
-    interval: 10_000,
-    retries: 120,
-  });
-  requireSuccessfulExecution(finalizedReceipt, "finalized");
-  onStage("finalized", textHash);
+    textHash,
+    onStage,
+    Date.now() + TRANSACTION_CONFIRMATION_TIMEOUT_MS,
+  );
+  if (!finalized) {
+    onStage("finalizing", textHash);
+    const onBackgroundStage: StageListener = (stage, stageHash, error) => {
+      onStage(stage === "accepted" ? "finalizing" : stage, stageHash, error);
+    };
+    void confirmTransaction(
+      hash,
+      textHash,
+      onBackgroundStage,
+      Number.POSITIVE_INFINITY,
+    ).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      onStage("failed", textHash, message);
+    });
+  }
   return textHash;
 }
 

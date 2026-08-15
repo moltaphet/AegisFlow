@@ -1,0 +1,24 @@
+{
+  "name": "AegisFlow Control",
+  "short_name": "AegisFlow",
+  "description": "Renewable microgrid insurance operator console on GenLayer StudioNet.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#e7ebe8",
+  "theme_color": "#10251f",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

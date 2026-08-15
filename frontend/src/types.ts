@@ -75,6 +75,7 @@ export type TxStage =
   | "signing"
   | "executing"
   | "accepted"
+  | "finalizing"
   | "finalized"
   | "failed";
 

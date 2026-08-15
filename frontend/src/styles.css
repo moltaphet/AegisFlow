@@ -379,6 +379,7 @@ main {
 }
 
 .configuration-strip,
+.consensus-strip,
 .read-error {
   display: flex;
   min-height: 38px;
@@ -387,6 +388,18 @@ main {
   padding: 8px 24px;
   font-size: 11px;
   border-bottom: 1px solid;
+}
+
+.consensus-strip {
+  color: #173f53;
+  background: #e2f2f8;
+  border-color: #9bc6d5;
+}
+
+.consensus-strip small {
+  margin-left: auto;
+  color: #456875;
+  font-size: 9px;
 }
 
 .configuration-strip {
@@ -1658,8 +1671,10 @@ td span:not(.status) {
 @media (max-width: 600px) {
   .topbar-title > div { display: none; }
   .network-pill { display: none; }
-  .configuration-strip { align-items: flex-start; padding: 9px 14px; }
+  .configuration-strip,
+  .consensus-strip { align-items: flex-start; padding: 9px 14px; }
   .configuration-strip code { display: none; }
+  .consensus-strip small { display: none; }
   .deployment-empty { min-height: 330px; grid-template-columns: 1fr; padding: 28px; }
   .instrument-hero .section-heading h1,
   .vault-balance .section-heading h1 { font-size: 49px; }
