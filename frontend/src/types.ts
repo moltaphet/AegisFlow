@@ -53,16 +53,25 @@ export interface VaultState {
   premiumPoolAtto: bigint;
   payoutReserveAtto: bigint;
   totalTvl: bigint;
+  totalPoolBalanceAtto: bigint;
   reservedAtto: bigint;
   unreservedAtto: bigint;
+  unreservedAvailableAtto: bigint;
   reserveAvailableAtto: bigint;
   accountingInvariant: boolean;
   reserveInvariant: boolean;
+  poolBalanceInvariant: boolean;
   policyCount: number;
   settledCount: number;
   expiredCount: number;
   totalPremiumsAtto: bigint;
   totalPayoutsAtto: bigint;
+  totalPendingTransfersAtto: bigint;
+}
+
+export interface PendingTransferState {
+  amountAtto: bigint;
+  nonce: number;
 }
 
 export interface SourceUrls {

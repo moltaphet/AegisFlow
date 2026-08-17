@@ -5,12 +5,9 @@ parametric insurance of renewable microgrids. A policy escrows its maximum
 payout from a native GEN reserve, then settles from independently fetched
 weather and infrastructure evidence under validator consensus.
 
-The repository includes a read-only verified StudioNet deployment record for
-`0x9De75d5487114b5523576f9a0671Fe78AD71d59d`. The address, trust model, vault
-invariants, generated schema, and decoded on-chain contract bytes were verified
-against the local artifacts on 2026-08-15. The original deployment transaction
-and deployer account are not available in this workspace and remain `null` in
-the metadata rather than being inferred.
+The verified StudioNet deployment is available at
+`0x2938DbD23bA845E0105AcC354B9071EE9A89643C`. The operator console uses this
+address by default unless `VITE_CONTRACT_ADDRESS` explicitly overrides it.
 
 ## Components
 
@@ -52,6 +49,9 @@ total_tvl = premium_pool_atto + payout_reserve_atto
 reserved_atto <= payout_reserve_atto
 reserve_available_atto = payout_reserve_atto - reserved_atto
 unreserved_atto = total_tvl - reserved_atto
+total_pool_balance_atto = total_tvl
+unreserved_available_atto = premium_pool_atto + reserve_available_atto
+total_pool_balance_atto = reserved_atto + unreserved_available_atto
 ```
 
 `fund_payout_reserve()` accepts native GEN from any account and credits the
@@ -68,13 +68,16 @@ capital between the two accounting pools without changing TVL.
 
 `remove_liquidity(amount_atto, pool)` is owner-only. Premium withdrawals cannot
 exceed the premium pool. Reserve withdrawals cannot touch locked policy capital,
-and every withdrawal is also capped by unreserved TVL. Native transfers use
-checks-effects-interactions: accounting state and invariants are committed before
-the transfer is emitted.
+and every withdrawal is also capped by unreserved TVL. Each recipient has an
+isolated transfer escrow and monotonically increasing operation nonce. Accounting
+effects and invariant checks complete before a finalized self-message can consume
+that escrow, and stale or reordered dispatch messages are ignored.
 
 Settlement releases the policy's entire reserve lock. Any payout is deducted
-from the payout reserve and TVL before native GEN is transferred to the holder.
-Expiry releases a stale lock without transferring value.
+from the payout reserve and TVL before native GEN is queued for the holder. A
+failed native send is credited back only to that recipient's escrow and advances
+its nonce; `retry_pending_transfer()` schedules the caller's current escrow
+generation. Expiry releases a stale lock without transferring value.
 
 ## Policy Lifecycle
 
@@ -173,6 +176,8 @@ Infrastructure report bytes are untrusted. Before classification, the contract:
 2. Computes SHA-256 over the exact response bytes.
 3. Fences normalized weather facts with the full uppercase weather-response
    digest and the bounded report body with the full uppercase report digest.
+   Report content containing either exact fence token is rejected before model
+   execution.
 4. Requires a strict JSON classification schema.
 5. Sanitizes and bounds the returned reason.
 
@@ -204,6 +209,8 @@ AegisFlow addresses these risks:
 - Insolvent underwriting: each policy locks its full 10x maximum payout.
 - Reserve theft: owner withdrawals cannot consume `reserved_atto`.
 - Reentrancy around payout: effects and invariant checks precede native transfer.
+- Reordered transfer failures: recipient-local nonces make stale dispatches no-op.
+- Cross-recipient rollback: failed sends recredit only the intended user escrow.
 - Unbounded external data: response, prompt, reason, input, and date limits apply.
 
 Residual trust remains. Open-Meteo, FEMA, USGS, and Google News can be wrong,
@@ -281,22 +288,22 @@ The script funds the deployer through StudioNet simulation only when needed,
 waits for finalization, rejects failed contract execution, obtains the deployed
 address from the decoded receipt, then reads `get_trust_model()` and
 `get_vault_state()`. It writes verified metadata only after the contract
-identifies itself as AegisFlow, both vault invariants are true, and the decoded
-contract bytes and generated schema match the local artifacts. The private key
-is never written to disk.
+identifies itself as AegisFlow, all three vault invariants are true, and the
+decoded contract bytes and generated schema match the local artifacts. The
+private key is never written to disk.
 
-The checked-in record was verified independently through read-only StudioNet
-RPC. It reports the expected AegisFlow identity, owner
+The superseded record was verified independently through read-only StudioNet
+RPC before the final audit changes. It reports the expected AegisFlow identity, owner
 `0x1f9813eeB2de53134af5C824cA156CE82C4EB0fa`, payout statuses, weather and
-infrastructure source model, and true accounting and reserve invariants. The
-decoded `gen_getContractCode` payload matches `contracts/aegis_flow.py` byte for
-byte, and `gen_getContractSchema` matches `contracts/aegis_flow.schema.json`.
+infrastructure source model, and the earlier accounting and reserve invariants.
+Its decoded `gen_getContractCode` payload and recorded code hash describe the
+superseded source, not the final audited `contracts/aegis_flow.py` bytes.
 
 ## Operator Console
 
-The console uses the address in the checked-in verified deployment record by
-default. A local `.env` can select another supported network or override the
-address:
+The console uses a checked-in address only when its deployment record is marked
+`verified`. A local `.env` can select another supported network or provide a
+newly deployed address:
 
 ```text
 VITE_GENLAYER_NETWORK=studionet

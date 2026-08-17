@@ -27,6 +27,10 @@ from datetime import datetime, timedelta, timezone
 from genlayer import *
 
 
+# Current verified StudioNet deployment.
+DEPLOYED_CONTRACT_ADDRESS = "0x2938DbD23bA845E0105AcC354B9071EE9A89643C"
+
+
 # Policy lifecycle.
 STATUS_ACTIVE = "ACTIVE"
 STATUS_CLAIM_SUBMITTED = "CLAIM_SUBMITTED"
@@ -170,6 +174,10 @@ class AegisFlow(gl.Contract):
     total_payouts_atto: u256
     settled_count: u256
     expired_count: u256
+    reserve_contributions_atto: TreeMap[Address, u256]
+    pending_transfers_atto: TreeMap[Address, u256]
+    pending_transfer_nonces: TreeMap[Address, u256]
+    total_pending_transfers_atto: u256
 
     def __init__(self) -> None:
         self.owner = gl.message.sender_address
@@ -183,6 +191,25 @@ class AegisFlow(gl.Contract):
         self.total_payouts_atto = u256(0)
         self.settled_count = u256(0)
         self.expired_count = u256(0)
+        self.total_pending_transfers_atto = u256(0)
+
+    def __on_errored_message__(self) -> None:
+        """Return a failed native send to only that recipient's retry escrow."""
+        self._assert_accounting()
+        recipient = gl.message.sender_address
+        amount = int(gl.message.value)
+        if amount <= 0:
+            return
+        self.pending_transfers_atto[recipient] = u256(
+            int(self.pending_transfers_atto.get(recipient, u256(0))) + amount
+        )
+        self.total_pending_transfers_atto = u256(
+            int(self.total_pending_transfers_atto) + amount
+        )
+        self.pending_transfer_nonces[recipient] = u256(
+            int(self.pending_transfer_nonces.get(recipient, u256(0))) + 1
+        )
+        self._assert_accounting()
 
     # ------------------------------------------------------------------ funds
 
@@ -192,6 +219,11 @@ class AegisFlow(gl.Contract):
         amount = int(gl.message.value)
         if amount <= 0:
             raise gl.vm.UserError(ERROR_EXPECTED + " Reserve funding must be positive")
+        self._assert_accounting()
+        funder = gl.message.sender_address
+        self.reserve_contributions_atto[funder] = u256(
+            int(self.reserve_contributions_atto.get(funder, u256(0))) + amount
+        )
         self.payout_reserve_atto = u256(int(self.payout_reserve_atto) + amount)
         self.total_tvl = u256(int(self.total_tvl) + amount)
         self._assert_accounting()
@@ -199,6 +231,7 @@ class AegisFlow(gl.Contract):
     @gl.public.write
     def allocate_premiums_to_reserve(self, amount_atto: u256) -> None:
         """Owner-only accounting move from earned premiums into the reserve."""
+        self._assert_accounting()
         self._require_owner()
         amount = int(amount_atto)
         if amount <= 0:
@@ -212,6 +245,7 @@ class AegisFlow(gl.Contract):
     @gl.public.write
     def remove_liquidity(self, amount_atto: u256, pool: str) -> None:
         """Remove only genuinely unreserved native GEN from one named pool."""
+        self._assert_accounting()
         self._require_owner()
         amount = int(amount_atto)
         pool_name = pool.strip().upper()
@@ -241,7 +275,7 @@ class AegisFlow(gl.Contract):
         # Effects precede the external transfer.
         self.total_tvl = u256(int(self.total_tvl) - amount)
         self._assert_accounting()
-        _NativeRecipient(self.owner).emit_transfer(value=u256(amount))
+        self._queue_transfer(self.owner, amount)
 
     # --------------------------------------------------------------- lifecycle
 
@@ -307,6 +341,7 @@ class AegisFlow(gl.Contract):
         premium = int(gl.message.value)
         if premium <= 0:
             raise gl.vm.UserError(ERROR_EXPECTED + " Premium must be positive")
+        self._assert_accounting()
         if premium > ((2**256) - 1) // MAX_PAYOUT_MULTIPLIER:
             raise gl.vm.UserError(ERROR_EXPECTED + " Premium is too large")
         max_payout = premium * MAX_PAYOUT_MULTIPLIER
@@ -370,6 +405,7 @@ class AegisFlow(gl.Contract):
         self, policy_id: int, report_source: str, report_reference: str
     ) -> None:
         """Submit a bounded source identity during the derived claim window."""
+        self._assert_accounting()
         self._require_not_paused()
         policy = self._require_policy(policy_id)
         if gl.message.sender_address != policy.holder:
@@ -389,10 +425,12 @@ class AegisFlow(gl.Contract):
         policy.claim_reference = reference
         policy.claim_submitted_ts = u256(now)
         policy.status = STATUS_CLAIM_SUBMITTED
+        self._assert_accounting()
 
     @gl.public.write
     def evaluate_claim(self, policy_id: int) -> str:
         """Fetch both sources under consensus and settle at 0, 50, or 100 percent."""
+        self._assert_accounting()
         self._require_not_paused()
         policy = self._require_policy(policy_id)
         if policy.status != STATUS_CLAIM_SUBMITTED:
@@ -444,6 +482,7 @@ class AegisFlow(gl.Contract):
                 coverage_start,
                 coverage_end,
                 str(weather["weather_fence"]),
+                str(weather["weather_digest"]),
             )
             return _complete_outcome(weather, report)
 
@@ -495,12 +534,13 @@ class AegisFlow(gl.Contract):
 
         self._assert_accounting()
         if payout > 0:
-            _NativeRecipient(policy_holder).emit_transfer(value=u256(payout))
+            self._queue_transfer(policy_holder, payout)
         return outcome
 
     @gl.public.write
     def expire_policy(self, policy_id: int) -> None:
         """Release a policy reserve after its immutable claim window closes."""
+        self._assert_accounting()
         policy = self._require_policy(policy_id)
         if policy.status not in (STATUS_ACTIVE, STATUS_CLAIM_SUBMITTED):
             raise gl.vm.UserError(ERROR_EXPECTED + " Policy cannot be expired")
@@ -518,8 +558,44 @@ class AegisFlow(gl.Contract):
     @gl.public.write
     def set_paused(self, paused: bool) -> None:
         """Owner-only emergency control for underwriting and claim execution."""
+        self._assert_accounting()
         self._require_owner()
         self.paused = bool(paused)
+        self._assert_accounting()
+
+    @gl.public.write
+    def retry_pending_transfer(self) -> None:
+        """Reschedule only the caller's failed or deferred native transfer."""
+        self._assert_accounting()
+        recipient = gl.message.sender_address
+        if int(self.pending_transfers_atto.get(recipient, u256(0))) <= 0:
+            raise gl.vm.UserError(ERROR_EXPECTED + " No pending transfer")
+        nonce = int(self.pending_transfer_nonces.get(recipient, u256(0))) + 1
+        self.pending_transfer_nonces[recipient] = u256(nonce)
+        self._assert_accounting()
+        self._schedule_transfer(recipient, nonce)
+
+    @gl.public.write
+    def dispatch_pending_transfer(self, recipient_hex: str, nonce: u256) -> None:
+        """Finalized self-message that atomically consumes one user escrow."""
+        if gl.message.sender_address != gl.message.contract_address:
+            raise gl.vm.UserError(ERROR_EXPECTED + " Only contract may dispatch")
+        self._assert_accounting()
+        recipient = Address(recipient_hex)
+        if int(nonce) != int(
+            self.pending_transfer_nonces.get(recipient, u256(0))
+        ):
+            return
+        amount = int(self.pending_transfers_atto.get(recipient, u256(0)))
+        if amount <= 0:
+            return
+
+        self.pending_transfers_atto[recipient] = u256(0)
+        self.total_pending_transfers_atto = u256(
+            int(self.total_pending_transfers_atto) - amount
+        )
+        self._assert_accounting()
+        _NativeRecipient(recipient).emit_transfer(value=u256(amount))
 
     # ------------------------------------------------------------------- views
 
@@ -568,27 +644,51 @@ class AegisFlow(gl.Contract):
         return int(self.next_policy_id) - 1
 
     @gl.public.view
+    def get_reserve_contribution(self, account_hex: str) -> str:
+        account = Address(account_hex)
+        return str(int(self.reserve_contributions_atto.get(account, u256(0))))
+
+    @gl.public.view
+    def get_pending_transfer(self, account_hex: str) -> dict:
+        account = Address(account_hex)
+        return {
+            "amount_atto": str(
+                int(self.pending_transfers_atto.get(account, u256(0)))
+            ),
+            "nonce": int(self.pending_transfer_nonces.get(account, u256(0))),
+        }
+
+    @gl.public.view
     def get_vault_state(self) -> dict:
         premium = int(self.premium_pool_atto)
         reserve = int(self.payout_reserve_atto)
         tvl = int(self.total_tvl)
         reserved = int(self.reserved_atto)
+        unreserved_available = premium + (reserve - reserved)
         return {
             "owner": self.owner.as_hex,
             "paused": bool(self.paused),
             "premium_pool_atto": str(premium),
             "payout_reserve_atto": str(reserve),
             "total_tvl": str(tvl),
+            "total_pool_balance_atto": str(tvl),
             "reserved_atto": str(reserved),
             "unreserved_atto": str(tvl - reserved),
+            "unreserved_available_atto": str(unreserved_available),
             "reserve_available_atto": str(reserve - reserved),
             "accounting_invariant": tvl == premium + reserve,
             "reserve_invariant": reserved <= reserve,
+            "pool_balance_invariant": (
+                tvl == reserved + unreserved_available
+            ),
             "policy_count": int(self.next_policy_id) - 1,
             "settled_count": int(self.settled_count),
             "expired_count": int(self.expired_count),
             "total_premiums_atto": str(int(self.total_premiums_atto)),
             "total_payouts_atto": str(int(self.total_payouts_atto)),
+            "total_pending_transfers_atto": str(
+                int(self.total_pending_transfers_atto)
+            ),
         }
 
     @gl.public.view
@@ -660,15 +760,38 @@ class AegisFlow(gl.Contract):
         if self.paused:
             raise gl.vm.UserError(ERROR_EXPECTED + " Contract is paused")
 
+    def _queue_transfer(self, recipient: Address, amount: int) -> None:
+        self._assert_accounting()
+        if amount <= 0:
+            raise gl.vm.UserError(ERROR_EXPECTED + " Transfer must be positive")
+        pending_before = int(self.pending_transfers_atto.get(recipient, u256(0)))
+        self.pending_transfers_atto[recipient] = u256(pending_before + amount)
+        self.total_pending_transfers_atto = u256(
+            int(self.total_pending_transfers_atto) + amount
+        )
+        nonce = int(self.pending_transfer_nonces.get(recipient, u256(0))) + 1
+        self.pending_transfer_nonces[recipient] = u256(nonce)
+        self._assert_accounting()
+        self._schedule_transfer(recipient, nonce)
+
+    def _schedule_transfer(self, recipient: Address, nonce: int) -> None:
+        self_contract = gl.get_contract_at(gl.message.contract_address)
+        self_contract.emit(on="finalized").dispatch_pending_transfer(
+            recipient.as_hex, nonce
+        )
+
     def _assert_accounting(self) -> None:
         premium = int(self.premium_pool_atto)
         reserve = int(self.payout_reserve_atto)
-        tvl = int(self.total_tvl)
+        total_pool_balance = int(self.total_tvl)
         reserved = int(self.reserved_atto)
-        if tvl != premium + reserve:
+        if total_pool_balance != premium + reserve:
             raise gl.vm.UserError(ERROR_EXPECTED + " TVL accounting invariant failed")
         if reserved > reserve:
             raise gl.vm.UserError(ERROR_EXPECTED + " Reserve invariant failed")
+        unreserved_available = premium + (reserve - reserved)
+        if total_pool_balance != reserved + unreserved_available:
+            raise gl.vm.UserError(ERROR_EXPECTED + " Pool balance invariant failed")
 
 
 # ---------------------------------------------------------------- pure helpers
@@ -1020,6 +1143,7 @@ def _fetch_report_outcome(
     coverage_start: str,
     coverage_end: str,
     weather_fence: str,
+    weather_digest: str,
 ) -> dict:
     try:
         response = gl.nondet.web.get(url)
@@ -1033,6 +1157,13 @@ def _fetch_report_outcome(
     token = digest.upper()
     if token in body:
         raise gl.vm.UserError(ERROR_EXTERNAL + " Report collided with prompt fence")
+    weather_token = weather_digest.upper()
+    weather_opening = "<<<AEGISFLOW_WEATHER:" + weather_token + ">>>"
+    weather_closing = "<<<END_AEGISFLOW_WEATHER:" + weather_token + ">>>"
+    if weather_opening in body or weather_closing in body:
+        raise gl.vm.UserError(
+            ERROR_EXTERNAL + " Report collided with weather prompt fence"
+        )
     prompt = _build_report_prompt(
         body,
         token,

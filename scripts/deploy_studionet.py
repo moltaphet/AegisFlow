@@ -80,8 +80,23 @@ def main() -> int:
     )
     if trust_model.get("name") != "AegisFlow":
         raise RuntimeError("Deployed contract failed AegisFlow identity check")
-    if not vault.get("accounting_invariant") or not vault.get("reserve_invariant"):
+    if (
+        not vault.get("accounting_invariant")
+        or not vault.get("reserve_invariant")
+        or not vault.get("pool_balance_invariant")
+    ):
         raise RuntimeError("Deployed contract failed vault invariant checks")
+    if int(vault["total_pool_balance_atto"]) != (
+        int(vault["reserved_atto"]) + int(vault["unreserved_available_atto"])
+    ):
+        raise RuntimeError("Deployed contract failed exact pool balance identity")
+    pending = client.read_contract(
+        address=address,
+        function_name="get_pending_transfer",
+        args=[trust_model["owner"]],
+    )
+    if int(pending["amount_atto"]) != 0 or int(pending["nonce"]) != 0:
+        raise RuntimeError("Deployed contract initialized with pending transfers")
 
     code_response = client.provider.make_request(
         method="gen_getContractCode", params=[address]
@@ -121,7 +136,7 @@ def main() -> int:
         "deployment_tx": transaction,
         "deployed_at": verified_at,
         "verified_at": verified_at,
-        "verification_method": "deployment receipt plus trust model, vault invariants, decoded code-byte equality, and schema equality",
+        "verification_method": "deployment receipt plus trust model, vault invariants, empty transfer escrow, decoded code-byte equality, and schema equality",
         "code_sha256": hashlib.sha256(deployed_code).hexdigest(),
         "schema_canonical_sha256": hashlib.sha256(canonical_schema).hexdigest(),
         "runner": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6",

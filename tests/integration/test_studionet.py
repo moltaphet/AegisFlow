@@ -102,9 +102,17 @@ def test_native_custody_and_policy_reserve_hold_in_genvm(contract, client):
     vault = contract.get_vault_state(args=[]).call()
     assert vault["accounting_invariant"] is True
     assert vault["reserve_invariant"] is True
+    assert vault["pool_balance_invariant"] is True
     assert int(vault["premium_pool_atto"]) == PREMIUM
     assert int(vault["payout_reserve_atto"]) == RESERVE
     assert int(vault["reserved_atto"]) == 10 * PREMIUM
+    assert int(vault["total_pool_balance_atto"]) == int(
+        vault["reserved_atto"]
+    ) + int(vault["unreserved_available_atto"])
+    assert int(vault["total_pending_transfers_atto"]) == 0
+    pending = contract.get_pending_transfer(args=[vault["owner"]]).call()
+    assert int(pending["amount_atto"]) == 0
+    assert int(pending["nonce"]) == 0
 
     policy = contract.get_policy(args=[1]).call()
     assert policy["status"] == "ACTIVE"

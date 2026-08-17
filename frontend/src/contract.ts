@@ -20,7 +20,13 @@ import {
   NETWORK_NAME,
   RPC_OVERRIDE,
 } from "./config/contract";
-import type { Policy, SourceUrls, TxStage, VaultState } from "./types";
+import type {
+  PendingTransferState,
+  Policy,
+  SourceUrls,
+  TxStage,
+  VaultState,
+} from "./types";
 
 const CHAINS = { studionet, localnet, testnetAsimov, testnetBradbury };
 const CHAIN = CHAINS[NETWORK_NAME];
@@ -317,16 +323,30 @@ export async function getVaultState(): Promise<VaultState> {
     premiumPoolAtto: readBig(value.premium_pool_atto),
     payoutReserveAtto: readBig(value.payout_reserve_atto),
     totalTvl: readBig(value.total_tvl),
+    totalPoolBalanceAtto: readBig(value.total_pool_balance_atto),
     reservedAtto: readBig(value.reserved_atto),
     unreservedAtto: readBig(value.unreserved_atto),
+    unreservedAvailableAtto: readBig(value.unreserved_available_atto),
     reserveAvailableAtto: readBig(value.reserve_available_atto),
     accountingInvariant: readBool(value.accounting_invariant),
     reserveInvariant: readBool(value.reserve_invariant),
+    poolBalanceInvariant: readBool(value.pool_balance_invariant),
     policyCount: readNumber(value.policy_count),
     settledCount: readNumber(value.settled_count),
     expiredCount: readNumber(value.expired_count),
     totalPremiumsAtto: readBig(value.total_premiums_atto),
     totalPayoutsAtto: readBig(value.total_payouts_atto),
+    totalPendingTransfersAtto: readBig(value.total_pending_transfers_atto),
+  };
+}
+
+export async function getPendingTransfer(
+  account: string,
+): Promise<PendingTransferState> {
+  const value = asRecord(await read("get_pending_transfer", [account]));
+  return {
+    amountAtto: readBig(value.amount_atto),
+    nonce: readNumber(value.nonce),
   };
 }
 
@@ -496,4 +516,8 @@ export function removeLiquidity(
 
 export function setPaused(paused: boolean, onStage: StageListener) {
   return write("set_paused", [paused], 0n, onStage);
+}
+
+export function retryPendingTransfer(onStage: StageListener) {
+  return write("retry_pending_transfer", [], 0n, onStage);
 }

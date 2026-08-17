@@ -60,6 +60,22 @@
       "ret": "int",
       "payable": true
     },
+    "dispatch_pending_transfer": {
+      "params": [
+        [
+          "recipient_hex",
+          "string"
+        ],
+        [
+          "nonce",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
     "evaluate_claim": {
       "params": [
         [
@@ -91,6 +107,17 @@
       "ret": "null",
       "payable": true
     },
+    "get_pending_transfer": {
+      "params": [
+        [
+          "account_hex",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "dict"
+    },
     "get_policy": {
       "params": [
         [
@@ -107,6 +134,17 @@
       "kwparams": {},
       "readonly": true,
       "ret": "int"
+    },
+    "get_reserve_contribution": {
+      "params": [
+        [
+          "account_hex",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "string"
     },
     "get_source_urls": {
       "params": [
@@ -142,6 +180,13 @@
           "string"
         ]
       ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "retry_pending_transfer": {
+      "params": [],
       "kwparams": {},
       "readonly": false,
       "ret": "null",

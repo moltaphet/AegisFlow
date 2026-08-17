@@ -47,16 +47,20 @@ const EMPTY_VAULT: VaultState = {
   premiumPoolAtto: 0n,
   payoutReserveAtto: 0n,
   totalTvl: 0n,
+  totalPoolBalanceAtto: 0n,
   reservedAtto: 0n,
   unreservedAtto: 0n,
+  unreservedAvailableAtto: 0n,
   reserveAvailableAtto: 0n,
   accountingInvariant: true,
   reserveInvariant: true,
+  poolBalanceInvariant: true,
   policyCount: 0,
   settledCount: 0,
   expiredCount: 0,
   totalPremiumsAtto: 0n,
   totalPayoutsAtto: 0n,
+  totalPendingTransfersAtto: 0n,
 };
 
 const EMPTY_TX: TransactionState = {
@@ -364,8 +368,8 @@ function Overview({
         </article>
         <article>
           <span className="metric-icon"><BadgeCheck size={18} /></span>
-          <div><span>Accounting state</span><strong>{vault.accountingInvariant && vault.reserveInvariant ? "Sound" : "Fault"}</strong></div>
-          <small>Two custody invariants monitored</small>
+          <div><span>Accounting state</span><strong>{vault.accountingInvariant && vault.reserveInvariant && vault.poolBalanceInvariant ? "Sound" : "Fault"}</strong></div>
+          <small>Three custody invariants monitored</small>
         </article>
       </section>
 
@@ -378,6 +382,7 @@ function Overview({
           <div className="invariant-set">
             <InvariantBadge ok={vault.accountingInvariant} label="TVL balanced" />
             <InvariantBadge ok={vault.reserveInvariant} label="Reserve solvent" />
+            <InvariantBadge ok={vault.poolBalanceInvariant} label="Pool identity" />
           </div>
         </div>
         <PolicyTable policies={policies} />
@@ -757,7 +762,29 @@ function Vault({
   const [allocationAmount, setAllocationAmount] = useState("1");
   const [withdrawAmount, setWithdrawAmount] = useState("1");
   const [withdrawPool, setWithdrawPool] = useState<"PREMIUM" | "RESERVE">("PREMIUM");
+  const [pendingTransferAtto, setPendingTransferAtto] = useState(0n);
   const [localError, setLocalError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    if (!configured || !wallet) {
+      setPendingTransferAtto(0n);
+      return () => {
+        active = false;
+      };
+    }
+    void contract
+      .getPendingTransfer(wallet)
+      .then((pending) => {
+        if (active) setPendingTransferAtto(pending.amountAtto);
+      })
+      .catch((error) => {
+        if (active) setLocalError(errorMessage(error));
+      });
+    return () => {
+      active = false;
+    };
+  }, [busy, configured, vault.totalPendingTransfersAtto, wallet]);
 
   if (!configured) return <DeploymentEmpty />;
   const isOwner = Boolean(wallet && vault.owner && wallet === vault.owner);
@@ -795,6 +822,7 @@ function Vault({
           <span><i className="premium-key" />Premium pool <b>{formatGen(vault.premiumPoolAtto)}</b></span>
           <span><i className="reserve-key" />Payout reserve <b>{formatGen(vault.payoutReserveAtto)}</b></span>
           <span><i className="locked-key" />Policy locked <b>{formatGen(vault.reservedAtto)}</b></span>
+          <span><i className="locked-key" />Transfer escrow <b>{formatGen(vault.totalPendingTransfersAtto)}</b></span>
         </div>
       </section>
 
@@ -826,6 +854,11 @@ function Vault({
           </form>
         </article>
 
+        <article className="action-module">
+          <div className="module-heading"><RefreshCw size={19} /><div><h2>Transfer recovery</h2><p>Retry only your isolated delivery escrow.</p></div></div>
+          <div className="pause-state running"><span><Banknote size={17} />{formatGen(pendingTransferAtto)} GEN pending</span><button className="secondary-button" type="button" disabled={!wallet || busy || pendingTransferAtto <= 0n} onClick={() => runAction("Retry transfer", false, contract.retryPendingTransfer)}><RefreshCw size={16} /> Retry</button></div>
+        </article>
+
         <article className="action-module emergency-module">
           <div className="module-heading"><Power size={19} /><div><h2>Emergency control</h2><p>Pause underwriting and claim execution.</p></div></div>
           <div className={`pause-state ${vault.paused ? "paused" : "running"}`}><span>{vault.paused ? <Pause size={17} /> : <Play size={17} />}{vault.paused ? "Operations paused" : "Operations running"}</span><button className={vault.paused ? "secondary-button" : "danger-button"} type="button" disabled={!isOwner || busy} onClick={() => runAction(vault.paused ? "Resume operations" : "Pause operations", false, (onStage) => contract.setPaused(!vault.paused, onStage))}>{vault.paused ? <Play size={16} /> : <Pause size={16} />}{vault.paused ? "Resume" : "Pause"}</button></div>
@@ -835,7 +868,7 @@ function Vault({
       {localError && <div className="form-error"><AlertTriangle size={16} />{localError}</div>}
       <section className="owner-strip">
         <div><LockKeyhole size={16} /><span>Vault owner</span><code>{vault.owner || "Unavailable"}</code></div>
-        <div className="invariant-set"><InvariantBadge ok={vault.accountingInvariant} label="TVL balanced" /><InvariantBadge ok={vault.reserveInvariant} label="Reserve solvent" /></div>
+        <div className="invariant-set"><InvariantBadge ok={vault.accountingInvariant} label="TVL balanced" /><InvariantBadge ok={vault.reserveInvariant} label="Reserve solvent" /><InvariantBadge ok={vault.poolBalanceInvariant} label="Pool identity" /></div>
       </section>
     </div>
   );
